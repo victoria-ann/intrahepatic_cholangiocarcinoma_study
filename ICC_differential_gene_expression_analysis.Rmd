@@ -1,0 +1,600 @@
+---
+title: "Intrahepatic Cholangiocarcinoma - DESeq2"
+author: "Victoria Palecek"
+date: "2024-04-06"
+output: pdf_document
+---
+
+# This chunk is setting the working directory where files can be written to or called from, it is also calling in the libraries needed for running the code, you may need to install the packages before running.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/toripalecek/Documents/BMB402/Final Project")
+library(DESeq2, quietly = TRUE)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+```
+
+# This chunk is reading in the .txt htseq files downloaded from Galaxy for the GRCm39 genome alignment, then merging them into a single data frame using the Gene IDs as a key for joining. 
+
+  * If you want to run this chunk, change your directory to where you have downloaded the 'HTSeq files GRCm39' folder.
+  
+```{r DESeq on GRCm39 genome}
+# Set the directory path where .txt count files are located
+directory <- "/Users/toripalecek/Documents/BMB402/Final Project/HTSeq file GRCM39"
+
+# Get a list of all .txt files in the directory
+txt_files <- list.files(directory, pattern = "\\.txt$", full.names = TRUE)
+
+# Create an empty list to store data frames
+data_frames_GRCm39 <- list()
+
+# Loop through each .txt file and read its contents
+for (file in txt_files) {
+  # Extract file name without extension
+  file_name <- tools::file_path_sans_ext(basename(file))
+  
+  # Extract ID and column name
+  parts <- strsplit(file_name, "_")[[1]]
+  ID <- parts[1]
+  column_name <- paste(parts[-1], collapse = "_")
+  
+  # Read the file with appropriate column names
+  data <- read.table(file, header = FALSE)
+  colnames(data) <- c("ID", column_name)  # Assigning column names
+  
+  # Add data frame to the list
+  data_frames_GRCm39[[file_name]] <- data
+}
+
+# Merge all data frames into a single data frame using "ID" as the key
+merged_GRCm39_data <- Reduce(function(x, y) merge(x, y, by = "ID", all = TRUE), data_frames_GRCm39)
+
+# Move the "ID" column to be the row names
+rownames(merged_GRCm39_data) <- merged_GRCm39_data$ID
+merged_GRCm39_data <- merged_GRCm39_data[, -1]  # Remove the "ID" column from the merged data frame
+
+# Now merged_data contains the merged data frame with "ID" as row names
+
+```
+
+# This chunk is setting up the sample, creating a DESeq object, running the DESeq pipeline, rlog transforming the data, and creatign the data for the PCA plot
+
+  * Order: ICB, GC, GC_ICB, CNTRL
+```{r Generate Samples and PCA Plot Data for GRCm39}
+# Define the sample mappings
+samples_GRCm39 <- data.frame(matrix(c("ICB_Rep3_GRCm39", "ICB_Rep2_GRCm39", "ICB_Rep1_GRCm39", "GC_Rep3_GRCm39", "GC_Rep2_GRCm39", "GC_Rep1_GRCm39", "GC_ICB_Rep3_GRCm39", "GC_ICB_Rep2_GRCm39", "Cntrl_Rep3_GRCm39", "Cntrl_Rep2_GRCm39" , "Cntrl_Rep1_GRCm39", "ICB_GRCm39", "ICB_GRCm39", "ICB_GRCm39", "GC_GRCm39", "GC_GRCm39", "GC_GRCm39", "GC_ICB_GRCm39", "GC_ICB_GRCm39", "Cntrl_GRCm39", "Cntrl_GRCm39" , "Cntrl_GRCm39"),ncol=2))
+
+names(samples_GRCm39) <- c("ID","Treatment")
+rownames(samples_GRCm39) <- samples_GRCm39[,1]
+samples_GRCm39$Treatment <- factor(c("ICB_GRCm39", "ICB_GRCm39", "ICB_GRCm39", "GC_GRCm39", "GC_GRCm39", "GC_GRCm39", "GC_ICB_GRCm39", "GC_ICB_GRCm39", "Cntrl_GRCm39", "Cntrl_GRCm39" , "Cntrl_GRCm39"))
+
+
+# Create the DEseq2DataSet object
+deseq2Data_GRCm39 <- DESeqDataSetFromMatrix(countData = merged_GRCm39_data,
+                              colData = samples_GRCm39,
+                              design = ~ Treatment)
+
+
+# Perform pre-filtering of the data for lowly expressed genes
+deseq2Data_GRCm39 <- deseq2Data_GRCm39[rowSums(counts(deseq2Data_GRCm39)) > 10, ]
+
+
+# Run pipeline for differential expression steps
+deseq2Data_GRCm39 <- DESeq(deseq2Data_GRCm39)
+
+# Save Results
+res <- results(deseq2Data_GRCm39)
+
+
+# rlog transform counts
+rld_GRCm39 <- rlog(deseq2Data_GRCm39, blind=FALSE)
+rlogcounts_GRCm39 <- data.frame(assay(deseq2Data_GRCm39))
+rownames(rlogcounts_GRCm39) <- rownames(deseq2Data_GRCm39)
+
+
+# PCA plot
+p_GRCm39 <- plotPCA(rld_GRCm39, intgroup=c("Treatment"), returnData=TRUE)
+```
+
+# This chunk creates a PCA Plot that labels the points with the sample labels to review the data
+
+```{r Generate PCA Plot with Sample Names for GRCm39}
+p_data_GRCm39 <- as.data.frame(p_GRCm39)
+
+
+# Extract percentage variance explained by each PC
+variance_explained <- round(attributes(p_GRCm39)$percentVar * 100, 2)
+
+
+# Plot PCA using ggplot2 and add sample names as labels
+ggplot(p_GRCm39, aes(x = PC1, y = PC2, color = Treatment, label = name)) +
+  geom_point() +
+  geom_text_repel(size = 3, point.padding = 0.5) +
+  theme_minimal() +
+  labs(title = "PCA Plot", x = paste0("PC1 (", variance_explained[1], "%)"), y = paste0("PC2 (", variance_explained[2], "%)")) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(label = NULL))
+```
+
+# This chunk runs pairwise comaprisons, then looks at the significantly differentially expressed genes from this comparison, generates plots for examining the data, and writes the resulst as a .txt file.
+
+  * This code can be updated for comparing different sample groups.
+
+
+# Sample Groups: "ICB_GRCm39", "GC_GRCm39", "GC_ICB_GRCm39", "Cntrl_GRCm39"
+
+```{r Pairwise Contrast & Plots for GRCm39}
+# Pairwise contrast
+res_ICB_CTRL_GRCm39<- results(deseq2Data_GRCm39, contrast=c("Treatment", "ICB_GRCm39", "Cntrl_GRCm39"))
+resOrdered_TGFB_CTRL_GRCm39 <- res_ICB_CTRL_GRCm39[order(res_ICB_CTRL_GRCm39$pvalue),]
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_ICB_CTRL_GRCm39$log2FoldChange)
+sum(res_ICB_CTRL_GRCm39$padj < 0.05, na.rm=TRUE)
+sum(res_ICB_CTRL_GRCm39$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_ICB_CTRL_GRCm39$pvalue < 0.05, na.rm=TRUE)
+
+
+# Save the results as a data frame
+ICB_CTRL_results_GRCm39 <- data.frame(res_ICB_CTRL_GRCm39)
+ICB_CTRL_results_GRCm39_genes <- ICB_CTRL_results_GRCm39
+# Make the ensemble gene ID into a row again and write background DF to a text file
+ICB_CTRL_results_GRCm39_genes <- tibble::rownames_to_column(ICB_CTRL_results_GRCm39_genes, var = "gene_id")
+write.table(ICB_CTRL_results_GRCm39_genes, "background_genes_GRCm39_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+
+# Look at which genes are significant
+pvalue_threshold <- 0.005
+fold_change_threshold <- 5
+
+sig_gene_GRCm39_ICB_CTRL <- subset(ICB_CTRL_results_GRCm39, padj < .0000000000000005)
+sig_genes_GRCm39_ICB_CTRL <- subset(ICB_CTRL_results_GRCm39, padj < .05)
+sig_genes_fold_GRCm39_ICB_CTRL <- subset(ICB_CTRL_results_GRCm39, log2FoldChange >2.5)
+sig_genes_both_GRCm39_ICB_CTRL <- subset(ICB_CTRL_results_GRCm39, padj < pvalue_threshold & abs(log2FoldChange) > fold_change_threshold)
+
+# Make the ensemble gene ID into a row again and write significant genes DF to a text file
+sig_genes_both_GRCm39_ICB_CTRL <- tibble::rownames_to_column(sig_genes_both_GRCm39_ICB_CTRL, var = "gene_id")
+write.table(sig_genes_both_GRCm39_ICB_CTRL, "significant_genes_GRCm39_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+# Make the ensemble gene ID into a row again and write background DF to a text file
+sig_genes_fold_GRCm39_ICB_CTRL <- tibble::rownames_to_column(sig_genes_fold_GRCm39_ICB_CTRL, var = "gene_id")
+write.table(sig_genes_fold_GRCm39_ICB_CTRL, "background_genes_GRCm39_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_ICB_CTRL_GRCm39)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_GRCm39, gene=which.min(res_ICB_CTRL_GRCm39$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_ICB_CTRL_GRCm39$log2FoldChange,-1*log2(res_ICB_CTRL_GRCm39$padj), pch=19)
+
+
+# Write out the results to a .txt file
+write.table(ICB_CTRL_results_GRCm39, "ICB_CTRL_GRCm39_DESeq2.txt", sep="\t", row.names=FALSE)
+```
+# GC/CTRL
+```{r Pairwise Contrast & Plots for GRCm39}
+# Pairwise contrast
+res_GC_CTRL_GRCm39<- results(deseq2Data_GRCm39, contrast=c("Treatment", "GC_GRCm39", "Cntrl_GRCm39"))
+resOrdered_TGFB_GCL_GRCm39 <- res_GC_CTRL_GRCm39[order(res_GC_CTRL_GRCm39$pvalue),]
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_GC_CTRL_GRCm39$log2FoldChange)
+sum(res_GC_CTRL_GRCm39$padj < 0.05, na.rm=TRUE)
+sum(res_GC_CTRL_GRCm39$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_GC_CTRL_GRCm39$pvalue < 0.05, na.rm=TRUE)
+
+
+# Save the results as a data frame
+GC_CTRL_results_GRCm39 <- data.frame(res_GC_CTRL_GRCm39)
+GC_CTRL_results_GRCm39_genes <- GC_CTRL_results_GRCm39
+# Make the ensemble gene ID into a row again and write background DF to a text file
+GC_CTRL_results_GRCm39_genes <- tibble::rownames_to_column(GC_CTRL_results_GRCm39_genes, var = "gene_id")
+write.table(GC_CTRL_results_GRCm39_genes, "background_genes_GRCm39_GC_CTRL.txt", sep="\t", row.names=FALSE)
+
+
+# Look at which genes are significant
+pvalue_threshold <- 0.005
+fold_change_threshold <- 5
+
+sig_gene_GRCm39_GC_CTRL <- subset(GC_CTRL_results_GRCm39, padj < .0000000000000005)
+sig_genes_GRCm39_GC_CTRL <- subset(GC_CTRL_results_GRCm39, padj < .05)
+sig_genes_fold_GRCm39_GC_CTRL <- subset(GC_CTRL_results_GRCm39, log2FoldChange >2.5)
+sig_genes_both_GRCm39_GC_CTRL <- subset(GC_CTRL_results_GRCm39, padj < pvalue_threshold & abs(log2FoldChange) > fold_change_threshold)
+
+# Make the ensemble gene ID into a row again and write significant genes DF to a text file
+sig_genes_both_GRCm39_GC_CTRL <- tibble::rownames_to_column(sig_genes_both_GRCm39_GC_CTRL, var = "gene_id")
+write.table(sig_genes_both_GRCm39_GC_CTRL, "significant_genes_GRCm39_GC_CTRL.txt", sep="\t", row.names=FALSE)
+
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_GC_CTRL_GRCm39)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_GRCm39, gene=which.min(res_GC_CTRL_GRCm39$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_GC_CTRL_GRCm39$log2FoldChange,-1*log2(res_GC_CTRL_GRCm39$padj), pch=19)
+
+
+# Write out the results to a .txt file
+write.table(results_GRCm39, "GC_CTRL_GRCm39_DESeq2.txt", sep="\t", row.names=FALSE)
+```
+
+
+#GC_ICB/CTRL
+```{r Pairwise Contrast & Plots for GRCm39}
+# Pairwise contrast
+res_GC_ICB_CTRL_GRCm39<- results(deseq2Data_GRCm39, contrast=c("Treatment", "GC_ICB_GRCm39", "Cntrl_GRCm39"))
+resOrdered_TGFB_CTRL_GRCm39 <- res_GC_ICB_CTRL_GRCm39[order(res_GC_ICB_CTRL_GRCm39$pvalue),]
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_GC_ICB_CTRL_GRCm39$log2FoldChange)
+sum(res_GC_ICB_CTRL_GRCm39$padj < 0.05, na.rm=TRUE)
+sum(res_GC_ICB_CTRL_GRCm39$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_GC_ICB_CTRL_GRCm39$pvalue < 0.05, na.rm=TRUE)
+
+
+# Save the results as a data frame
+GC_ICB_results_GRCm39 <- data.frame(res_GC_ICB_CTRL_GRCm39)
+GC_ICB_results_GRCm39_genes <- GC_ICB_results_GRCm39
+# Make the ensemble gene ID into a row again and write background DF to a text file
+GC_ICB_results_GRCm39_genes <- tibble::rownames_to_column(GC_ICB_results_GRCm39_genes, var = "gene_id")
+write.table(GC_ICB_results_GRCm39_genes, "background_genes_GRCm39_GC_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+
+# Look at which genes are significant
+pvalue_threshold <- 0.005
+fold_change_threshold <- 5
+
+sig_gene_GRCm39_GC_ICB_CTRL <- subset(GC_ICB_results_GRCm39, padj < .0000000000000005)
+sig_genes_GRCm39_GC_ICB_CTRL <- subset(GC_ICB_results_GRCm39, padj < .05)
+sig_genes_fold_GRCm39_GC_ICB_CTRL <- subset(GC_ICB_results_GRCm39, log2FoldChange >2.5)
+sig_genes_both_GRCm39_GC_ICB_CTRL <- subset(GC_ICB_results_GRCm39, padj < pvalue_threshold & abs(log2FoldChange) > fold_change_threshold)
+
+# Make the ensemble gene ID into a row again and write significant genes DF to a text file
+sig_genes_both_GRCm39_GC_ICB_CTRL <- tibble::rownames_to_column(sig_genes_both_GRCm39_GC_ICB_CTRL, var = "gene_id")
+write.table(sig_genes_both_GRCm39_GC_ICB_CTRL, "significant_genes_GRCm39_GC_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+# Make the ensemble gene ID into a row again and write background DF to a text file
+sig_genes_fold_GRCm39_GC_ICB_CTRL <- tibble::rownames_to_column(sig_genes_fold_GRCm39_GC_ICB_CTRL, var = "gene_id")
+write.table(sig_genes_fold_GRCm39_GC_ICB_CTRL, "background_genes_GRCm39_GC_ICB_CTRL.txt", sep="\t", row.names=FALSE)
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_GC_ICB_CTRL_GRCm39)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_GRCm39, gene=which.min(res_GC_ICB_CTRL_GRCm39$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_GC_ICB_CTRL_GRCm39$log2FoldChange,-1*log2(res_GC_ICB_CTRL_GRCm39$padj), pch=19)
+
+
+# Write out the results to a .txt file
+write.table(results_GRCm39, "GC_ICB_CTRL_GRCm39_DESeq2.txt", sep="\t", row.names=FALSE)
+```
+
+
+
+# This chunk is reading in the .txt htseq files downloaded from Galaxy for the mm10 genome alignment, then merging them into a single data frame using the Gene IDs as a key for joining. 
+
+  * If you want to run this chunk, change your directory to where you have downloaded the 'HTSeq files mm10' folder.
+
+```{r DESeq on mm10 genome}
+# Set the directory path where .txt count files are located
+directory <- "/Users/toripalecek/Documents/BMB402/Final Project/HTSeq files mm10"
+
+# Get a list of all .txt files in the directory
+txt_files <- list.files(directory, pattern = "\\.txt$", full.names = TRUE)
+
+# Create an empty list to store data frames
+data_frames_mm10 <- list()
+
+# Loop through each .txt file and read its contents
+for (file in txt_files) {
+  # Extract file name without extension
+  file_name <- tools::file_path_sans_ext(basename(file))
+  
+  # Extract ID and column name
+  parts <- strsplit(file_name, "_")[[1]]
+  ID <- parts[1]
+  column_name <- paste(parts[-1], collapse = "_")
+  
+  # Read the file with appropriate column names
+  data <- read.table(file, header = FALSE)
+  colnames(data) <- c("ID", column_name)  # Assigning column names
+  
+  # Add data frame to the list
+  data_frames_mm10[[file_name]] <- data
+}
+
+# Merge all data frames into a single data frame using "ID" as the key
+merged_data_mm10 <- Reduce(function(x, y) merge(x, y, by = "ID", all = TRUE), data_frames_mm10)
+
+# Move the "ID" column to be the row names
+rownames(merged_data_mm10) <- merged_data_mm10$ID
+merged_data_mm10 <- merged_data_mm10[, -1]  # Remove the "ID" column from the merged data frame
+
+# Now merged_data contains the merged data frame with "ID" as row names
+
+```
+
+# This chunk is setting up the sample, creating a DESeq object, running the DESeq pipeline, rlog transforming the data, and creatign the data for the PCA plot
+
+  * Order: ICB, GC, GC_ICB, CNTRL
+
+```{r Generate Samples and PCA Plot Data for mm10}
+# Define the sample mappings
+samples_mm10 <- data.frame(matrix(c("ICB_Rep3_mm10", "ICB_Rep2_mm10", "ICB_Rep1_mm10", "GC_Rep3_mm10", "GC_Rep2_mm10", "GC_Rep1_mm10", "GC_ICB_Rep3_mm10", "GC_ICB_Rep2_mm10", "Cntrl_Rep3_mm10",  "Cntrl_Rep2_mm10", "Cntrl_Rep1_mm10" , "ICB_mm10", "ICB_mm10", "ICB_mm10", "GC_mm10", "GC_mm10", "GC_mm10", "GC_ICB_mm10", "GC_ICB_mm10", "Cntrl_mm10",  "Cntrl_mm10", "Cntrl_mm10"),ncol=2))
+
+names(samples_mm10) <- c("ID","Treatment")
+rownames(samples_mm10) <- samples_mm10[,1]
+samples_mm10$Treatment <- factor(c("ICB_mm10", "ICB_mm10", "ICB_mm10", "GC_mm10", "GC_mm10", "GC_mm10", "GC_ICB_mm10", "GC_ICB_mm10", "Cntrl_mm10",  "Cntrl_mm10", "Cntrl_mm10"))
+
+# Create the DEseq2DataSet object
+deseq2Data_mm10 <- DESeqDataSetFromMatrix(countData = merged_data_mm10,
+                              colData = samples_mm10,
+                              design = ~ Treatment)
+
+# Filter lowly expressed genes
+dim(deseq2Data_mm10)
+dim(deseq2Data_mm10[rowSums(counts(deseq2Data_mm10)) > 10, ])
+
+# Perform pre-filtering of the data
+deseq2Data_mm10 <- deseq2Data_mm10[rowSums(counts(deseq2Data_mm10)) > 10, ]
+
+
+# Run pipeline for differential expression steps
+deseq2Data_mm10 <- DESeq(deseq2Data_mm10)
+
+res_mm10 <- results(deseq2Data_mm10)
+
+
+# rlog transform counts
+rld_mm10 <- rlog(deseq2Data_mm10, blind=FALSE)
+rlogcounts_mm10 <- data.frame(assay(deseq2Data_mm10))
+rownames(rlogcounts_mm10) <- rownames(deseq2Data_mm10)
+
+# PCA plot
+p_mm10 <- plotPCA(rld_mm10, intgroup=c("Treatment"), returnData=TRUE)
+```
+
+# This chunk creates a PCA Plot that labels the points with the sample labels to review the data
+
+
+```{r Generate PCA Plot with Sample Names for mm10}
+p_data_mm10 <- as.data.frame(p_mm10)
+
+# Extract percentage variance explained by each PC
+variance_explained <- round(attributes(p_mm10)$percentVar * 100, 2)
+
+# Plot PCA using ggplot2 and add sample names as labels
+ggplot(p_mm10, aes(x = PC1, y = PC2, color = Treatment, label = name)) +
+  geom_point() +
+  geom_text_repel(size = 3, point.padding = 0.5) +
+  theme_minimal() +
+  labs(title = "PCA Plot", x = paste0("PC1 (", variance_explained[1], "%)"), y = paste0("PC2 (", variance_explained[2], "%)")) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(label = NULL))
+```
+
+
+# This chunk runs pairwise comaprisons, then looks at the significantly differentially expressed genes from this comparison, generates plots for examining the data, and writes the resulst as a .txt file.
+
+  * This code can be updated for comparing different sample groups.
+
+
+# Sample Groups: "ICB_mm10", "GC_mm10", "GC_ICB_mm10", "Cntrl_mm10"
+
+
+# ICB/CTRL
+```{r Pairwise Contrast & Plots for mm10}
+# Pairwise contrast of ICB and CTRL
+res_ICB_CTRL_mm10<- results(deseq2Data_mm10, contrast=c("Treatment", "ICB_mm10", "Cntrl_mm10"))
+
+resOrdered_ICB_CTRL_mm10 <- res_ICB_CTRL_mm10[order(res_ICB_CTRL_mm10$pvalue),]
+
+
+# Save the results as a data frame
+ICB_CTRL_results_mm10 <- data.frame(res_ICB_CTRL_mm10)
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_ICB_CTRL_mm10$log2FoldChange)
+sum(res_ICB_CTRL_mm10$padj < 0.05, na.rm=TRUE)
+sum(res_ICB_CTRL_mm10$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_ICB_CTRL_mm10$pvalue < 0.05, na.rm=TRUE)
+
+
+# Look at which genes are significant
+pvalue_threshold <- 0.05
+fold_change_threshold <- 5
+
+sig_gene_mm10_ICB_CTRL <- subset(ICB_CTRL_results_mm10, padj < .0000000000000005)
+sig_genes_mm10_ICB_CTRL <- subset(ICB_CTRL_results_mm10, padj < .05)
+sig_genes_fold_mm10_ICB_CTRL <- subset(ICB_CTRL_results_mm10, log2FoldChange >7)
+sig_genes_both_mm10_ICB_CTRL <- subset(ICB_CTRL_results_mm10, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_ICB_CTRL_mm10)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_mm10, gene=which.min(res_ICB_CTRL_mm10$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_ICB_CTRL_mm10$log2FoldChange,-1*log2(res_ICB_CTRL_mm10$padj),pch=19)
+
+
+# Write out the results to a .txt file
+write.table(ICB_CTRL_results_mm10,"ICB_CTRL_mm10_DESeq2.txt",sep="\t",row.names=FALSE)
+
+# Reset row names to be an actual column named "gene_id"
+sig_genes_GRCm39_ICB_CTRL <- tibble::rownames_to_column(sig_genes_GRCm39_ICB_CTRL, var = "gene_id")
+sig_genes_mm10_ICB_CTRL <- tibble::rownames_to_column(sig_genes_mm10_ICB_CTRL, var = "gene_id")
+
+# Remove the decimals and numbers after them from the ensemble gene ID's in the mm10 data
+sig_genes_mm10_ICB_CTRL$gene_id <- gsub("\\.\\d+", "", sig_genes_mm10_ICB_CTRL$gene_id)
+
+#Find genes that are present in GRCm39 but not in mm10
+unique_ICB_CTRL <-anti_join(sig_genes_GRCm39_ICB_CTRL, sig_genes_mm10_ICB_CTRL, by = "gene_id")
+
+#Find unique genes that are significant
+unique_sig_ICB_CTRL <- subset(unique_ICB_CTRL, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+# Write out the unique genes to a .txt file
+write.table(unique_sig_ICB_CTRL,"unique_ICB_CTRL.txt",sep="\t",row.names=FALSE)
+```
+
+#GC/CTRL
+```{r Pairwise Contrast & Plots for mm10}
+# Pairwise contrast
+res_GC_CTRL_mm10<- results(deseq2Data_mm10, contrast=c("Treatment", "GC_mm10", "Cntrl_mm10"))
+
+resOrdered_GC_CTRL_mm10 <- res_ICB_CTRL_mm10[order(res_GC_CTRL_mm10$pvalue),]
+
+
+# Save the results as a data frame
+GC_CTRL_results_mm10 <- data.frame(res_GC_CTRL_mm10)
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_GC_CTRL_mm10$log2FoldChange)
+sum(res_GC_CTRL_mm10$padj < 0.05, na.rm=TRUE)
+sum(res_GC_CTRL_mm10$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_GC_CTRL_mm10$pvalue < 0.05, na.rm=TRUE)
+
+
+# Look at which genes are significant
+
+pvalue_threshold <- 0.05
+fold_change_threshold <- 5
+
+sig_gene_mm10_GC_CTRL <- subset(GC_CTRL_results_mm10, padj < .0000000000000005)
+sig_genes_mm10_GC_CTRL <- subset(GC_CTRL_results_mm10, padj < .05)
+sig_genes_fold_mm10_GC_CTRL <- subset(GC_CTRL_results_mm10, log2FoldChange >7)
+sig_genes_both_mm10_GC_CTRL <- subset(GC_CTRL_results_mm10, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_GC_CTRL_mm10)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_mm10, gene=which.min(res_GC_CTRL_mm10$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_GC_CTRL_mm10$log2FoldChange,-1*log2(res_GC_CTRL_mm10$padj),pch=19)
+
+
+# Write out the results to a .txt file
+write.table(results_mm10,"GC_CTRL_mm10_DESeq2.txt",sep="\t",row.names=FALSE)
+
+# Reset row names to be an actual column named "gene_id"
+sig_genes_GRCm39_GC_CTRL <- tibble::rownames_to_column(sig_genes_GRCm39_GC_CTRL, var = "gene_id")
+sig_genes_mm10_GC_CTRL <- tibble::rownames_to_column(sig_genes_mm10_GC_CTRL, var = "gene_id")
+
+# Remove the decimals and numbers after them from the ensemble gene ID's in the mm10 data
+sig_genes_mm10_GC_CTRL$gene_id <- gsub("\\.\\d+", "", sig_genes_mm10_GC_CTRL$gene_id)
+
+#Find genes that are significant and present in GRCm39 but not in mm10
+unique_GC_CTRL <-anti_join(sig_genes_GRCm39_GC_CTRL, sig_genes_mm10_GC_CTRL, by = "gene_id")
+
+#Find unique genes that are significant
+unique_sig_GC_CTRL <- subset(unique_GC_CTRL, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+# Write out the unique genes to a .txt file
+write.table(unique_sig_GC_CTRL,"unique_GC_CTRL.txt",sep="\t",row.names=FALSE)
+```
+
+#GC_ICB/CTRL
+```{r Pairwise Contrast & Plots for mm10}
+# Pairwise contrast
+res_GC_ICB_CTRL_mm10<- results(deseq2Data_mm10, contrast=c("Treatment", "GC_ICB_mm10", "Cntrl_mm10"))
+
+resOrdered_GC_ICB_CTRL_mm10 <- res_GC_ICB_CTRL_mm10[order(res_GC_ICB_CTRL_mm10$pvalue),]
+
+
+# Save the results as a data frame
+GC_ICB_CTRL_results_mm10 <- data.frame(res_GC_ICB_CTRL_mm10)
+
+
+# Get number of differentially expressed data at different thresholds
+summary(res_GC_ICB_CTRL_mm10$log2FoldChange)
+sum(res_GC_ICB_CTRL_mm10$padj < 0.05, na.rm=TRUE)
+sum(res_GC_ICB_CTRL_mm10$padj < 0.000000000000005, na.rm=TRUE)
+sum(res_GC_ICB_CTRL_mm10$pvalue < 0.05, na.rm=TRUE)
+
+
+# Look at which genes are significant
+pvalue_threshold <- 0.005
+fold_change_threshold <- 5 
+
+sig_gene_mm10_GC_ICB_CTRL <- subset(GC_ICB_CTRL_results_mm10, padj < .0000000000000005)
+sig_genes_mm10_GC_ICB_CTRL <- subset(GC_ICB_CTRL_results_mm10, padj < .05)
+sig_genes_fold_mm10_GC_ICB_CTRL <- subset(GC_ICB_CTRL_results_mm10, log2FoldChange >5)
+sig_genes_both_mm10_GC_ICB_CTRL <- subset(GC_ICB_CTRL_results_mm10, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+# MA plot
+#pdf("TGFB_MA_plot.pdf")
+plotMA(res_GC_ICB_CTRL_mm10)
+#dev.off()
+
+
+# Plot the normalized expression data for the top gene
+plotCounts(deseq2Data_mm10, gene=which.min(res_GC_ICB_CTRL_mm10$padj), intgroup="Treatment")
+
+
+# Volcano plot
+plot(res_GC_ICB_CTRL_mm10$log2FoldChange,-1*log2(res_GC_ICB_CTRL_mm10$padj),pch=19)
+
+
+# Write out the results to a .txt file
+write.table(GC_ICB_CTRL_results_mm10,"GC_ICB_CTRL_mm10_DESeq2.txt",sep="\t",row.names=FALSE)
+
+# Reset row names to be an actual column named "gene_id"
+sig_genes_GRCm39_GC_ICB_CTRL <- tibble::rownames_to_column(sig_genes_GRCm39_GC_ICB_CTRL, var = "gene_id")
+sig_genes_mm10_GC_ICB_CTRL <- tibble::rownames_to_column(sig_genes_mm10_GC_ICB_CTRL, var = "gene_id")
+
+# Remove the decimals and numbers after them from the ensemble gene ID's in the mm10 data
+sig_genes_mm10_GC_ICB_CTRL$gene_id <- gsub("\\.\\d+", "", sig_genes_mm10_GC_ICB_CTRL$gene_id)
+
+#Find genes that are significant and present in GRCm39 but not in mm10
+unique_GC_ICB_CTRL <-anti_join(sig_genes_GRCm39_GC_ICB_CTRL, sig_genes_mm10_GC_ICB_CTRL, by = "gene_id")
+
+#Find unique genes that are significant
+unique_sig_GC_ICB_CTRL <- subset(unique_GC_ICB_CTRL, padj < pvalue_threshold & abs(log2FoldChange) > log2(fold_change_threshold))
+
+# Write out the unique genes to a .txt file
+write.table(unique_sig_GC_ICB_CTRL,"unique_GC_ICB_CTRL.txt",sep="\t",row.names=FALSE)
+```
+
+
+
+
